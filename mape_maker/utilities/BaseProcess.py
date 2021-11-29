@@ -40,6 +40,8 @@ class BaseProcess:
         self.name = name
         self.outfile_estimation_parameters = os.path.join(file_path,
                                                           "stored_vectors/{}_ARMAmodel.pkl".format(self.name))
+        self.z_hat = z_hat
+
         if base_process == "ARMA":
             if load_coeffs:
                 try:

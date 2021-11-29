@@ -28,8 +28,8 @@ class Dataset:
 
     """
 
-    def __init__(self, logger: Logger, csv_filepath: str = None, dataset: 'Dataset' = None, start_date: str = None,
-                 end_date: str = None, ending_feature: str = "actuals", scale_by_capacity: float = None) -> None:
+    def __init__(self, logger: Logger, csv_filepath: str = None, df: pd.DataFrame=None, dataset: 'Dataset' = None, start_date: str = None,
+                 end_date: str = None, ending_feature: str = "actuals", scale_by_capacity: float = None, name:str=None) -> None:
         """
 
         Args:
@@ -46,6 +46,8 @@ class Dataset:
             ending_feature (str): the name of the dependent variable that will be simulated. Defaults to "actuals".
 
         """
+        # print("NAME", name)
+
         self.logger = logger
         self.cap = None
         self.scale_by_capacity = scale_by_capacity
@@ -69,7 +71,11 @@ class Dataset:
             self.name = csv_filepath.split(
                 "/")[-1].split(".")[0] + "_to{}".format(self.y_name)
             self.x_t, self.y_t, self.e_t, self.ares_t, self.full_df = self.cut_timeseries(
-                csv_filepath, start_date, end_date)
+                csv_filepath, start_date, end_date, df=df)
+        elif df is not None:
+            self.name = name
+            self.x_t, self.y_t, self.e_t, self.ares_t, self.full_df = self.cut_timeseries(
+                csv_filepath, start_date, end_date, df=df)
         else:
             self.name = dataset.name + "_SID"
             self.x_t, self.y_t, self.e_t, self.ares_t = self.get_timeseries_from_dataset(
@@ -81,14 +87,19 @@ class Dataset:
         self.arma_process = None
         self.om = None  #: weight function
         self.s_x = None  #: conditional distribution
+        self.z_hat = None
         self.m = None  #: conditional mean absolute error function
         self.m_max = None
         self.dataset_info = self.compute_statistics()
+        # print("NAME", name)
         self.outfile_estimation_parameters = os.path.join(file_path,
                                                           "stored_vectors/{}_parameters.pkl".format(
                                                               self.name))
+        self.outfile_base_process = os.path.join(file_path,
+                                                          "stored_vectors/stored_bps/{}_bp.pkl".format(
+                                                              self.name))
 
-    def cut_timeseries(self, csv_filepath: str, start_date: datetime.datetime, end_date: datetime.datetime) \
+    def cut_timeseries(self, csv_filepath: str, start_date: datetime.datetime, end_date: datetime.datetime, df:pd.DataFrame=None) \
             -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         """slice the dataset, process it and computes the errors
 
@@ -110,7 +121,8 @@ class Dataset:
         """
         self.logger.info(
             loading_bar + "\nXY data is being loaded and processed")
-        df = pd.read_csv(csv_filepath)
+        if csv_filepath is not None:
+            df = pd.read_csv(csv_filepath)
         df = set_index(self, df)
         number_of_columns = df.shape[1]
         if number_of_columns == 2:
@@ -190,6 +202,9 @@ class Dataset:
             self.m = d["m"]
             self.om = d["om"]
             self.m_max = d["m_max"]
+        with open(self.outfile_base_process, 'rb') as f:
+            d = pickle.load(f)
+            self.z_hat = d
         return True
 
     def save_pickle(self) -> bool:
@@ -207,6 +222,8 @@ class Dataset:
             d = dict([["s_x", self.s_x], ["m", self.m], [
                      "m_max", self.m_max], ["om", self.om]])
             pickle.dump(d, f, pickle.HIGHEST_PROTOCOL)
+        with open(self.outfile_base_process, 'wb') as f:
+            pickle.dump(self.z_hat, f, pickle.HIGHEST_PROTOCOL)
         return True
 
     def compute_statistics(self) -> Dict[str, float]:
@@ -405,3 +422,11 @@ def remove_na(logger, col_name, df):
         index_not_na = df[~df[col_name].isna()].index
         df = df.loc[index_not_na]
     return df
+
+def load_spatial_data(path):
+    spatial_df = pd.read_csv(path)
+    spatial_df["datetime"] = spatial_df.apply(lambda row: datetime.datetime(int(row["Year"]), int(row["Month"]), int(row["Day"]), int(row["Period"]) - 1),
+        axis=1)
+    spatial_df.index = spatial_df["datetime"]
+    return spatial_df
+

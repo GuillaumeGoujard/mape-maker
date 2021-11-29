@@ -65,12 +65,12 @@ class SimParams:
         """
         self.cfx = self.construct_cfx(xyid.dataset_x, sid.dataset_x)
         self.logger.info(loading_bar + "\nDetermination of the weight function om_tilde")
-        self.om_tilde, self.e_score = self.create_sid_weight_function(xyid.om, xyid.dataset_x, sid.dataset_x)
-        self.logger.info(loading_bar + "\nDetermination of the maximum of mare attainable")
-        self.m_max, self.r_tilde_max = self.infer_r_tilde_max(xyid.m_max, sid.dataset_x)
-        self.check_feasibility()
-        self.logger.info(loading_bar + "\nDetermination of the target function m_tilde")
-        self.get_maes_from_weight_target(sid.dataset_x)
+        # self.om_tilde, self.e_score = self.create_sid_weight_function(xyid.om, xyid.dataset_x, sid.dataset_x)
+        # self.logger.info(loading_bar + "\nDetermination of the maximum of mare attainable")
+        # self.m_max, self.r_tilde_max = self.infer_r_tilde_max(xyid.m_max, sid.dataset_x)
+        # self.check_feasibility()
+        # self.logger.info(loading_bar + "\nDetermination of the target function m_tilde")
+        # self.get_maes_from_weight_target(sid.dataset_x)
         self.logger.info(loading_bar + "\nComputation of the new simulation parameters")
         self.s_x_tilde, nb_errors = self.get_s_tilde_sid(sid.dataset_x, xyid.s_x, xyid.m)
 
@@ -183,42 +183,42 @@ class SimParams:
 
         """
         s_x_sid = dict([(key, []) for key in dataset_sid])
-        _, _, l, s = s_x[list(s_x.keys())[0]]
+        (_, _, l, s), dirac_proba = s_x[list(s_x.keys())[0]]
         p = len(dataset_sid) // 8
         nb_errors = 0
         for j, x in enumerate(dataset_sid):
-            a, b, loc_nx, scale_nx = s_x[self.cfx[x]]
-            try:
-                loc_nx = -x if loc_nx < -x else loc_nx
-                scale_nx = self.cap if scale_nx > self.cap else scale_nx
-                oh = max(abs(loc_nx), abs(scale_nx), self.m_tilde[x])
-                # NOTE: the upper bound for s should be cap - x - l
-                nl, ns = least_squares(find_intersections,
-                                       x0=(loc_nx, scale_nx),
-                                       bounds=([-x, 0], [loc_nx, self.cap]),
-                                       args=(self.m_tilde[x], a, b, loc_nx, scale_nx, oh, False),
-                                       ftol=1e-3, method="dogbox").x
-                if ns == 0:
-                    ns = scale_nx
-                if j % p == 0:
-                    self.logger.info("     - l_hat and s_hat = {}, {} for m_hat(x) = {} => l_tilde and s_tilde = {}, {} "
-                                "for m_tilde = {} < m_max = {}: {}% done".format("%.1f" % loc_nx, "%.1f" % scale_nx,
-                                                                                 "%.1f" % m_hat[x],
-                                                                                 "%.1f" % nl, "%.1f" % ns,
-                                                                                 "%.1f" % self.m_tilde[x], "%.1f" % self.m_max[x],
-                                                                                 (round(100 * j / len(dataset_sid[:-1]),
-                                                                                        3))))
-            except Exception as e:
-                if x != 0 and x != self.cap:  # bounds are equal for these cases
-                    nb_errors += 1
-                    if self.m_tilde[x] > self.m_max[self.cfx[x]]:
-                        self.logger.error(
-                            "     * The MAE target {} is greater than the maximum target {}".format(round(self.m_tilde[x]),
-                                                                                                    round(self.m_max[self.cfx[x]])))
-                    self.logger.error(" * For x = {}, infeasible to meet the target exactly".format(x))
-                    self.logger.error(" {}".format(e))
-                nl, ns = loc_nx, scale_nx
-            s_x_sid[x] = [a, b, nl, ns]
+            # (a, b, loc_nx, scale_nx), dirac_proba_2 = s_x[self.cfx[x]]
+            # try:
+            #     loc_nx = -x if loc_nx < -x else loc_nx
+            #     scale_nx = self.cap if scale_nx > self.cap else scale_nx
+            #     oh = max(abs(loc_nx), abs(scale_nx), self.m_tilde[x])
+            #     # NOTE: the upper bound for s should be cap - x - l
+            #     nl, ns = least_squares(find_intersections,
+            #                            x0=(loc_nx, scale_nx),
+            #                            bounds=([-x, 0], [loc_nx, self.cap]),
+            #                            args=(self.m_tilde[x], a, b, loc_nx, scale_nx, oh, False),
+            #                            ftol=1e-3, method="dogbox").x
+            #     if ns == 0:
+            #         ns = scale_nx
+            #     if j % p == 0:
+            #         self.logger.info("     - l_hat and s_hat = {}, {} for m_hat(x) = {} => l_tilde and s_tilde = {}, {} "
+            #                     "for m_tilde = {} < m_max = {}: {}% done".format("%.1f" % loc_nx, "%.1f" % scale_nx,
+            #                                                                      "%.1f" % m_hat[x],
+            #                                                                      "%.1f" % nl, "%.1f" % ns,
+            #                                                                      "%.1f" % self.m_tilde[x], "%.1f" % self.m_max[x],
+            #                                                                      (round(100 * j / len(dataset_sid[:-1]),
+            #                                                                             3))))
+            # except Exception as e:
+            #     if x != 0 and x != self.cap:  # bounds are equal for these cases
+            #         nb_errors += 1
+            #         if self.m_tilde[x] > self.m_max[self.cfx[x]]:
+            #             self.logger.error(
+            #                 "     * The MAE target {} is greater than the maximum target {}".format(round(self.m_tilde[x]),
+            #                                                                                         round(self.m_max[self.cfx[x]])))
+            #         self.logger.error(" * For x = {}, infeasible to meet the target exactly".format(x))
+            #         self.logger.error(" {}".format(e))
+            #     nl, ns = loc_nx, scale_nx
+            s_x_sid[x] = s_x[self.cfx[x]] #[a, b, nl, ns], dirac_proba_2
         return s_x_sid, nb_errors
 
 

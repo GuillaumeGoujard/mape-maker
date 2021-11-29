@@ -7,6 +7,7 @@ from scipy import stats
 from scipy.stats import beta
 from scipy import optimize
 import pandas as pd
+import copy
 import matplotlib.pyplot as plt
 loading_bar = "-"*70
 
@@ -21,7 +22,9 @@ class XYID(Dataset):
     """
     len_s_hat = 2000  #: number of elements on which estimate s_hat
 
-    def __init__(self, a: float, base_process: str = "ARMA", xyid_load_pickle: bool = True, **kwargs) -> None:
+    def __init__(self, a: float, base_process: str = "ARMA", xyid_load_pickle: bool = True, energy_source="",
+                 lat_long=(0,0), bus_node=0,
+                 **kwargs) -> None:
         """Initiate a XYID object
 
             a (float): percent/2 of data for estimation samples
@@ -30,25 +33,32 @@ class XYID(Dataset):
 
         """
         super().__init__(**kwargs)
+        self.energy_source = energy_source
+        self.long_lat = (lat_long[1], lat_long[0])
+        self.bus_node = bus_node
         self.m_max = None  #: dictionary of maximum attainable mean absolute error
         self.a = a
         if xyid_load_pickle:
             try:
+                print("Loading")
                 self.load_pickle()
                 self.logger.info(
                     loading_bar + "\n Estimation parameters, conditional MAES, weight function have been loaded")
+                print("ARMA Process")
                 self.create_arma_process(
                     base_process=base_process, xyid_load_pickle=xyid_load_pickle)
             except Exception as e:
+                print(e)
                 self.logger.error(e)
                 self.logger.error(loading_bar + "\nCouldn't load")
                 self.fit(base_process=base_process)
         else:
             self.fit(base_process=base_process)
         self.save_pickle()
+        print("Estimation")
         self.compute_estimation_statistics()
-        self.logger.info(
-            loading_bar + "\nMax MAPE attainable for full dataset {}%".format("%2.f" % (100 * self.dataset_info["r_m_max"])))
+        # self.logger.info(
+        #     loading_bar + "\nMax MAPE attainable for full dataset {}%".format("%2.f" % (100 * self.dataset_info["r_m_max"])))
 
     def fit(self, base_process: str = "ARMA", xyid_load_pickle: bool = False):
         """
@@ -66,12 +76,12 @@ class XYID(Dataset):
         self.estimate_parameters()
         self.logger.info(
             loading_bar + "\nConditional Mean Absolute Errors are being computed\n")
-        self.get_maes_from_parameters()
-        self.compute_estimation_statistics()
-        self.logger.info(loading_bar + "\nWeight function is being computed\n")
-        self.create_weight_function(self.dataset_info.get("scale_by_capacity"))
-        self.logger.info(
-            loading_bar + "\nBase Process {} is being fitted\n".format(base_process))
+        # self.get_maes_from_parameters()
+        # self.compute_estimation_statistics()
+        # self.logger.info(loading_bar + "\nWeight function is being computed\n")
+        # self.create_weight_function(self.dataset_info.get("scale_by_capacity"))
+        # self.logger.info(
+        #     loading_bar + "\nBase Process {} is being fitted\n".format(base_process))
         self.create_arma_process(
             base_process=base_process, xyid_load_pickle=xyid_load_pickle)
 
@@ -84,19 +94,32 @@ class XYID(Dataset):
         Returns:
 
         """
-        if base_process == "ARMA":
+        # print("z_hat begin")
+        if self.z_hat is None or not xyid_load_pickle:
             z_hat = [0.] * self.n_samples
+            xs = self.x_t.values
+            es = self.e_t.values
+            ys = self.y_t.values
             for j in range(self.n_samples):
-                p = self.s_x[self.x_t.iloc[j]]
-                y = stats.beta.cdf(
-                    self.e_t.iloc[j], p[0], p[1], loc=p[2], scale=p[3])
+                p, dirac_prob = self.s_x[xs[j]]
+                if ys[j] <= 0:
+                    y = dirac_prob[0]
+                elif ys[j] >= self.cap:
+                    y = 1-dirac_prob[1]
+                else:
+                    y = dirac_prob[0] + (1-sum(dirac_prob))*stats.beta.cdf(es[j], p[0], p[1], loc=p[2], scale=p[3])
                 y = 0.00001 if y == 0 else y
                 y = 0.99999 if y == 1 else y
                 z_hat[j] = norm.ppf(y)
             z_hat = pd.Series(index=self.x_t.index, data=z_hat)
-        else:
-            z_hat = None
-        self.arma_process = BaseProcess(self.logger, z_hat=z_hat, base_process=base_process, name=self.name,
+            # print("z_hat end")
+            self.z_hat = z_hat
+
+        # if base_process == "ARMA":
+        #
+        # else:
+        #     z_hat = None
+        self.arma_process = BaseProcess(self.logger, z_hat=self.z_hat, base_process=base_process, name=self.name,
                                         load_coeffs=xyid_load_pickle)  #: second we fit an ARMA process and save it
 
     def estimate_parameters(self):
@@ -108,7 +131,11 @@ class XYID(Dataset):
         for j, x in enumerate(self.dataset_x):
             i = np.argmin(abs(x_bar - x))
             nx = x_bar[i]
-            self.s_x[x] = s_x_a[nx]
+            self.s_x[x] = copy.deepcopy(s_x_a[nx])
+            if x < nx:
+                self.s_x[x][0][2] = self.s_x[x][0][2] - (x-nx)
+            elif x > nx:
+                self.s_x[x][0][3] = self.s_x[x][0][3] - (x - nx)
             if j % p == 0:
                 self.logger.info("     - Closest xbar for x = {} is {},  {}% done"
                                  .format("%.3f" % x, "%.3f" % nx, (round(100 * j / (self.n_samples - 1), 3))))
@@ -121,15 +148,16 @@ class XYID(Dataset):
             0, self.dataset_info.get("cap"), XYID.len_s_hat)
         beta_parameters = [[0] * 4] * XYID.len_s_hat
         mean_var_sample = [[0] * 2] * XYID.len_s_hat
+        dirac_parameters = [[0] * 2] * XYID.len_s_hat
         x_bar = np.array([0] * XYID.len_s_hat, dtype=float)
         for k, x_ in enumerate(index_search):
             a_ = 1 if x_ == index_search[-1] else self.a
-            x_bar[int(k)], beta_parameters[k], mean_var_sample[k] = self.find_parameters(
+            x_bar[int(k)], beta_parameters[k], mean_var_sample[k], dirac_parameters[k] = self.find_parameters(
                 x_, a_)
             if k % 50 == 0:
                 self.logger.info("{}% of the dataset fit".format(
                     round(100 * k / XYID.len_s_hat, 2)))
-        return x_bar, dict([(x_bar[i], beta_parameters[i]) for i in range(XYID.len_s_hat)])
+        return x_bar, dict([(x_bar[i], (beta_parameters[i], dirac_parameters[i])) for i in range(XYID.len_s_hat)])
 
     def find_parameters(self, x_, a_):
         """For a given x_, find the sample with a% on the right and a% on the left, set its bounds (l and s) and
@@ -150,20 +178,34 @@ class XYID(Dataset):
             self.x_t < self.dataset_x[right_bound])  # strict condition used in v1
         x_bar = np.mean(self.x_t[interval_index])
         error_sample = self.e_t[interval_index]
+        """
+        Remove zero and cap non-zero measure
+        """
+        p_cap = self.y_t[interval_index][self.y_t[interval_index] >= self.cap].shape[0]/error_sample.shape[0]
+        p_zero = self.y_t[interval_index][self.y_t[interval_index] <= 0.0].shape[0] / error_sample.shape[0]
+
+        error_sample = error_sample.loc[(self.y_t[interval_index] > 0.0) & (self.y_t[interval_index] < self.cap)]
         mean, var = np.mean(error_sample), np.std(error_sample) ** 2
         abs_lower = - x_bar
         abs_upper = self.dataset_info.get("cap") - x_bar
-        if min(error_sample) < abs_lower:
-            lower = abs_lower
+        if error_sample.shape[0] != 0:
+            if min(error_sample) < abs_lower:
+                lower = abs_lower
+            else:
+                lower = min(error_sample)
+            if max(error_sample) > abs_upper:
+                upper = self.dataset_info.get("cap") - x_bar - lower
+            else:
+                upper = max(error_sample) - lower
+            # lower = min(error_sample)
+            # upper = max(error_sample) - lower
+            [a, b] = fsolve(find_alpha_beta, np.array([1, 1]), args=(lower, upper, mean, var))
         else:
-            lower = min(error_sample)
-        if max(error_sample) > abs_upper:
-            upper = self.dataset_info.get("cap") - x_bar - lower
-        else:
-            upper = max(error_sample) - lower
-        [a, b] = fsolve(find_alpha_beta, np.array(
-            [1, 1]), args=(lower, upper, mean, var))
-        return x_bar, [a, b, lower, upper], [mean, var]
+            lower, upper = abs_lower, abs_upper
+            # print(p_zero, p_cap)
+            a, b = 1, 1
+        return x_bar, [a, b, lower, upper], [mean, var], [p_zero, p_cap]
+
 
     def get_maes_from_parameters(self):
         """Get the Mean absolute error of each distribution with parameters in s_x
@@ -172,7 +214,7 @@ class XYID(Dataset):
         m_hat, m_max = {}, {}
         p = self.n_samples // 16
         for i, x in enumerate(self.dataset_x):
-            a, b, l_, s_ = self.s_x[x]
+            (a, b, l_, s_), dirac_proba = self.s_x[x]
             try:
                 sample = beta.rvs(a, b, loc=l_, scale=s_,
                                   size=4000, random_state=1234)
@@ -188,6 +230,7 @@ class XYID(Dataset):
                     sample = beta.rvs(a, b, loc=l_, scale=s_,
                                       size=4000, random_state=1234)
             last_good_parameters = (a, b, l_, s_)
+            # print(last_good_parameters)
             opt = optimize.minimize(integrate_a_mean_1d, x0=np.array((l_, s_)),
                                     bounds=((-x, 0), (0, self.dataset_info["cap"])), args=(a, b),
                                     tol=1e-1)

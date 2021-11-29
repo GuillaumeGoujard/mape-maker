@@ -20,8 +20,10 @@ class SID(Dataset):
         self.seed = None
         self.number_of_simulations = 0
         self.curvature_parameters = None
+        self.saved_last_simulation = None
+        self.saved_simulations = None
 
-    def simulate_multiple_scenarios(self, output_dir: str, **kwargs):
+    def simulate_multiple_scenarios(self, output_dir: str, base_processes=None, **kwargs):
         """simulate multiple scenarios and store them in output dir
 
         Notes:
@@ -35,18 +37,24 @@ class SID(Dataset):
 
         """
         simulations = pd.DataFrame()
+        if base_processes is None:
+            base_processes = [None for _ in range(self.number_of_simulations)]
+        elif base_processes.ndim == 1:
+            base_processes = base_processes.reshape(1,-1)
         for i in range(self.number_of_simulations):
-            simulation = self.simulate_one_scenario()
+            simulation = self.simulate_one_scenario(base_process=base_processes[i])
             simulation.name = simulation.name + "_n_{}".format(i)
             simulations = pd.concat([simulations, simulation], axis=1)
+        self.saved_simulations = simulations
         return simulations
 
-    def simulate_one_scenario(self):
+    def simulate_one_scenario(self, base_process=None):
         simulation = pd.DataFrame(index=self.x_t.index)
         simulation.loc[self.x_t.index, "x"] = self.x_t
-        simulation["base_process"] = self.arma_process.simulate_base_process(self.x_t)
+        simulation["base_process"] = self.arma_process.simulate_base_process(self.x_t) if base_process is None else base_process
         simulation["error"] = simulation.apply(self.from_bp_to_errors, axis=1)
         simulation[self.y_name] = simulation.apply(self.from_errors_to_simulated, axis=1, **{"cap": self.dataset_info['cap']})
+        self.saved_last_simulation = simulation
         simulation = self.adjust_curvature(simulation)
         return simulation
 
@@ -69,8 +77,14 @@ class SID(Dataset):
     def from_bp_to_errors(self, row):
         x = row["x"]  # row has three rows : error, x, bp, and set datetime as columns
         bp = row["base_process"]
-        a, b, loc, scale = self.s_x[x]
-        simulated_error = beta.ppf(bp, a, b, loc=loc, scale=scale)  # scale = 0 cause NAN
+        # print(row)
+        (a, b, loc, scale), dirac_prob = self.s_x[x]
+        if bp <= dirac_prob[0]:
+            simulated_error = -x
+        elif bp >= 1-dirac_prob[1]:
+            simulated_error = self.cap - x
+        else:
+            simulated_error = beta.ppf(bp, a, b, loc=loc, scale=scale)  # scale = 0 cause NAN
         return simulated_error
 
     def from_errors_to_simulated(self, row, floored=True, simulators=(), floor=0, cap=4500, show_errors=False):
