@@ -64,13 +64,14 @@ class SimParams:
 
         """
         self.cfx = self.construct_cfx(xyid.dataset_x, sid.dataset_x)
+        print(self.cfx)
         self.logger.info(loading_bar + "\nDetermination of the weight function om_tilde")
-        # self.om_tilde, self.e_score = self.create_sid_weight_function(xyid.om, xyid.dataset_x, sid.dataset_x)
+        self.om_tilde, self.e_score = self.create_sid_weight_function(xyid.om, xyid.dataset_x, sid.dataset_x)
         # self.logger.info(loading_bar + "\nDetermination of the maximum of mare attainable")
         # self.m_max, self.r_tilde_max = self.infer_r_tilde_max(xyid.m_max, sid.dataset_x)
         # self.check_feasibility()
-        # self.logger.info(loading_bar + "\nDetermination of the target function m_tilde")
-        # self.get_maes_from_weight_target(sid.dataset_x)
+        self.logger.info(loading_bar + "\nDetermination of the target function m_tilde")
+        self.get_maes_from_weight_target(sid.dataset_x)
         self.logger.info(loading_bar + "\nComputation of the new simulation parameters")
         self.s_x_tilde, nb_errors = self.get_s_tilde_sid(sid.dataset_x, xyid.s_x, xyid.m)
 
@@ -108,6 +109,7 @@ class SimParams:
             raise RuntimeError("x values in SID completely outside fitting x values")
         e = 0
         length_of_non_zeros = 0
+        print(self.cfx)
         for x in dataset_sid:
             if x != 0:
                 length_of_non_zeros += 1
@@ -144,14 +146,14 @@ class SimParams:
         nb_bound_exceptions = 0
         for x in dataset_sid:
             self.m_tilde[x] = self.r_tilde * x * self.om_tilde[x]
-            if self.m_tilde[x] > self.m_max[self.cfx[x]]:
-                # self.bound_list.append(x)
-                nb_bound_exceptions += 1
-                if nb_bound_exceptions < 10:
-                    self.logger.info("Anticipating bound exception...  \n" + " " * 5 + "- MAE targeted {},\n".format(
-                        "%.2f" % self.m_tilde[x]) +
-                                " " * 5 + "- MAE max obtainable {}".format("%.2f" % self.m_max[x]))
-                self.m_tilde[x] = self.m_max[self.cfx[x]]
+            # if self.m_tilde[x] > self.m_max[self.cfx[x]]:
+            #     # self.bound_list.append(x)
+            #     nb_bound_exceptions += 1
+            #     if nb_bound_exceptions < 10:
+            #         self.logger.info("Anticipating bound exception...  \n" + " " * 5 + "- MAE targeted {},\n".format(
+            #             "%.2f" % self.m_tilde[x]) +
+            #                     " " * 5 + "- MAE max obtainable {}".format("%.2f" % self.m_max[x]))
+            #     self.m_tilde[x] = self.m_max[self.cfx[x]]
         if nb_bound_exceptions == 0:
             self.logger.info("There were no bound exceptions anticipated")
         else:
@@ -187,38 +189,41 @@ class SimParams:
         p = len(dataset_sid) // 8
         nb_errors = 0
         for j, x in enumerate(dataset_sid):
-            # (a, b, loc_nx, scale_nx), dirac_proba_2 = s_x[self.cfx[x]]
-            # try:
-            #     loc_nx = -x if loc_nx < -x else loc_nx
-            #     scale_nx = self.cap if scale_nx > self.cap else scale_nx
-            #     oh = max(abs(loc_nx), abs(scale_nx), self.m_tilde[x])
-            #     # NOTE: the upper bound for s should be cap - x - l
-            #     nl, ns = least_squares(find_intersections,
-            #                            x0=(loc_nx, scale_nx),
-            #                            bounds=([-x, 0], [loc_nx, self.cap]),
-            #                            args=(self.m_tilde[x], a, b, loc_nx, scale_nx, oh, False),
-            #                            ftol=1e-3, method="dogbox").x
-            #     if ns == 0:
-            #         ns = scale_nx
-            #     if j % p == 0:
-            #         self.logger.info("     - l_hat and s_hat = {}, {} for m_hat(x) = {} => l_tilde and s_tilde = {}, {} "
-            #                     "for m_tilde = {} < m_max = {}: {}% done".format("%.1f" % loc_nx, "%.1f" % scale_nx,
-            #                                                                      "%.1f" % m_hat[x],
-            #                                                                      "%.1f" % nl, "%.1f" % ns,
-            #                                                                      "%.1f" % self.m_tilde[x], "%.1f" % self.m_max[x],
-            #                                                                      (round(100 * j / len(dataset_sid[:-1]),
-            #                                                                             3))))
-            # except Exception as e:
-            #     if x != 0 and x != self.cap:  # bounds are equal for these cases
-            #         nb_errors += 1
-            #         if self.m_tilde[x] > self.m_max[self.cfx[x]]:
-            #             self.logger.error(
-            #                 "     * The MAE target {} is greater than the maximum target {}".format(round(self.m_tilde[x]),
-            #                                                                                         round(self.m_max[self.cfx[x]])))
-            #         self.logger.error(" * For x = {}, infeasible to meet the target exactly".format(x))
-            #         self.logger.error(" {}".format(e))
-            #     nl, ns = loc_nx, scale_nx
-            s_x_sid[x] = s_x[self.cfx[x]] #[a, b, nl, ns], dirac_proba_2
+            (a, b, loc_nx, scale_nx), dirac_proba_2 = s_x[self.cfx[x]]
+            try:
+                loc_nx = -x if loc_nx < -x else loc_nx
+                scale_nx = self.cap if scale_nx > self.cap else scale_nx
+                oh = max(abs(loc_nx), abs(scale_nx), self.m_tilde[x])
+                # NOTE: the upper bound for s should be cap - x - l
+                print((loc_nx, scale_nx, dirac_proba_2[0], dirac_proba_2[1]))
+                nl, ns, p0, p1 = least_squares(find_intersections,
+                                       x0=(loc_nx, scale_nx, dirac_proba_2[0], dirac_proba_2[1]),
+                                       bounds=([-x, 0, 0, 0], [loc_nx, self.cap, 1, 1]),
+                                       args=(x, self.m_tilde[x], a, b, loc_nx, scale_nx, dirac_proba_2, oh, self.cap, False),
+                                       ftol=1e-3, method="dogbox").x
+                if ns == 0:
+                    ns = scale_nx
+                if j % p == 0:
+                    self.logger.info("     - l_hat and s_hat = {}, {} for m_hat(x) = {} => l_tilde and s_tilde = {}, {} "
+                                "for m_tilde = {} < m_max = {}: {}% done".format("%.1f" % loc_nx, "%.1f" % scale_nx,
+                                                                                 "%.1f" % m_hat[x],
+                                                                                 "%.1f" % nl, "%.1f" % ns,
+                                                                                 "%.1f" % self.m_tilde[x], "%.1f" % self.m_max[x],
+                                                                                 (round(100 * j / len(dataset_sid[:-1]),
+                                                                                        3))))
+            except Exception as e:
+                print(e)
+                if x != 0 and x != self.cap:  # bounds are equal for these cases
+                    nb_errors += 1
+                    # if self.m_tilde[x] > self.m_max[self.cfx[x]]:
+                    #     self.logger.error(
+                    #         "     * The MAE target {} is greater than the maximum target {}".format(round(self.m_tilde[x]),
+                    #                                                                                 round(self.m_max[self.cfx[x]])))
+                    self.logger.error(" * For x = {}, infeasible to meet the target exactly".format(x))
+                    self.logger.error(" {}".format(e))
+                nl, ns = loc_nx, scale_nx
+                p0, p1 = dirac_proba_2
+            s_x_sid[x] = [a, b, nl, ns], [p0, p1]
         return s_x_sid, nb_errors
 
 
@@ -230,11 +235,11 @@ def integrate_a_mean_2d(l_, x_, a=0, b=0, verbose=False):
     return beta_mare
 
 
-def find_intersections(x, target=0, a=0, b=0, l_hat=0, s_hat=0, oh=0, verbose=False):
+def find_intersections(x, x_bar=0, target=0, a=0, b=0, l_hat=0, s_hat=0, dirac_proba=(0,0), oh=0, cap=1, verbose=False):
     # x is a list, x[0] is l and x[1] is s
     # this is not exactly what is in the paper
-    sqarg = integrate_a_mean_2d(x[0], x[1], a=a, b=b, verbose=verbose) - target \
-            + abs((x[0] - l_hat) / oh) + abs((x[1] - s_hat) / oh)
+    sqarg = x[2]*x_bar + x[3]*(cap-x_bar) + (1 - x[2] - x[3])*integrate_a_mean_2d(x[0], x[1], a=a, b=b, verbose=verbose) - target \
+            + abs((x[0] - l_hat) / oh) + abs((x[1] - s_hat) / oh) + abs((x[2] - dirac_proba[0]) / oh) + abs((x[3] - dirac_proba[1]) / oh)
     return [sqarg, 0]
 
 def check_curvature_parameters(curvature_parameters, xyid):

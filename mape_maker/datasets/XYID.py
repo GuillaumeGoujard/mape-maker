@@ -76,12 +76,12 @@ class XYID(Dataset):
         self.estimate_parameters()
         self.logger.info(
             loading_bar + "\nConditional Mean Absolute Errors are being computed\n")
-        # self.get_maes_from_parameters()
-        # self.compute_estimation_statistics()
-        # self.logger.info(loading_bar + "\nWeight function is being computed\n")
-        # self.create_weight_function(self.dataset_info.get("scale_by_capacity"))
-        # self.logger.info(
-        #     loading_bar + "\nBase Process {} is being fitted\n".format(base_process))
+        self.get_maes_from_parameters()
+        self.compute_estimation_statistics()
+        self.logger.info(loading_bar + "\nWeight function is being computed\n")
+        self.create_weight_function(self.dataset_info.get("scale_by_capacity"))
+        self.logger.info(
+            loading_bar + "\nBase Process {} is being fitted\n".format(base_process))
         self.create_arma_process(
             base_process=base_process, xyid_load_pickle=xyid_load_pickle)
 
@@ -150,16 +150,19 @@ class XYID(Dataset):
         mean_var_sample = [[0] * 2] * XYID.len_s_hat
         dirac_parameters = [[0] * 2] * XYID.len_s_hat
         x_bar = np.array([0] * XYID.len_s_hat, dtype=float)
+        a_past = 1
+        b_past = 1
         for k, x_ in enumerate(index_search):
-            a_ = 1 if x_ == index_search[-1] else self.a
+            # a_ = 1 if x_ == index_search[-1] else self.a
             x_bar[int(k)], beta_parameters[k], mean_var_sample[k], dirac_parameters[k] = self.find_parameters(
-                x_, a_)
+                x_, self.a, a_past=a_past, b_past=b_past)
+            a_past, b_past = beta_parameters[k][:2]
             if k % 50 == 0:
                 self.logger.info("{}% of the dataset fit".format(
                     round(100 * k / XYID.len_s_hat, 2)))
         return x_bar, dict([(x_bar[i], (beta_parameters[i], dirac_parameters[i])) for i in range(XYID.len_s_hat)])
 
-    def find_parameters(self, x_, a_):
+    def find_parameters(self, x_, a_, a_past=1, b_past=1):
         """For a given x_, find the sample with a% on the right and a% on the left, set its bounds (l and s) and
         find the shape parameters with the method of moment
 
@@ -169,10 +172,8 @@ class XYID(Dataset):
         """
         index_x_ = np.argwhere(self.dataset_x >= x_)[0][0]
         half_length_sample = int((a_ / 100) * self.n_different_samples)
-        left_bound = index_x_ - half_length_sample if index_x_ - \
-            half_length_sample > 0 else 0
-        right_bound = index_x_ + half_length_sample if index_x_ + half_length_sample < self.n_different_samples \
-            else self.n_different_samples - 1
+        left_bound, right_bound = select_left_right_bound(index_x_, half_length_sample, self.n_different_samples)
+        # print(left_bound, right_bound)
 
         interval_index = (self.x_t > self.dataset_x[left_bound]) & (
             self.x_t < self.dataset_x[right_bound])  # strict condition used in v1
@@ -185,6 +186,7 @@ class XYID(Dataset):
         p_zero = self.y_t[interval_index][self.y_t[interval_index] <= 0.0].shape[0] / error_sample.shape[0]
 
         error_sample = error_sample.loc[(self.y_t[interval_index] > 0.0) & (self.y_t[interval_index] < self.cap)]
+        error_sample = reject_outliers(error_sample)
         mean, var = np.mean(error_sample), np.std(error_sample) ** 2
         abs_lower = - x_bar
         abs_upper = self.dataset_info.get("cap") - x_bar
@@ -199,26 +201,38 @@ class XYID(Dataset):
                 upper = max(error_sample) - lower
             # lower = min(error_sample)
             # upper = max(error_sample) - lower
-            [a, b] = fsolve(find_alpha_beta, np.array([1, 1]), args=(lower, upper, mean, var))
+            if upper < 0:
+                print("PROBLEM ", x_)
+            # print("Problem in this fsolve")
+            #TODO add regularization with respect to past a, b
+            [a, b] = fsolve(find_alpha_beta, x0=np.array([a_past, b_past]), xtol=1e-2, args=(lower, upper, mean, var))
+            a = abs(a)
+            b = abs(b)
         else:
             lower, upper = abs_lower, abs_upper
             # print(p_zero, p_cap)
             a, b = 1, 1
+
+        # TODO Sometimes upper < lower!
         return x_bar, [a, b, lower, upper], [mean, var], [p_zero, p_cap]
 
 
     def get_maes_from_parameters(self):
         """Get the Mean absolute error of each distribution with parameters in s_x
         """
+        #TODO can we speed up this process?
         last_good_parameters = None  # deal with failure to get good beta parameters
         m_hat, m_max = {}, {}
         p = self.n_samples // 16
         for i, x in enumerate(self.dataset_x):
+            # print(x)
             (a, b, l_, s_), dirac_proba = self.s_x[x]
             try:
                 sample = beta.rvs(a, b, loc=l_, scale=s_,
                                   size=4000, random_state=1234)
             except:
+                # print(" beta rvs failed at i={},x={}; a={}, b={}, l_={}, s_={}".format(i, x, a, b, l_, s_))
+                #TODO Inspect why it is failing: problem with the estimation
                 self.logger.warning("******* WARNING!! **********")
                 self.logger.warning(
                     " beta rvs failed at i={},x={}; a={}, b={}, l_={}, s_={}".format(i, x, a, b, l_, s_))
@@ -231,9 +245,13 @@ class XYID(Dataset):
                                       size=4000, random_state=1234)
             last_good_parameters = (a, b, l_, s_)
             # print(last_good_parameters)
-            opt = optimize.minimize(integrate_a_mean_1d, x0=np.array((l_, s_)),
+            # TODO compute m_max for the mixture
+            # TODO this procedure ends up failing
+            cons = [{"type": "ineq", "fun": lambda x: x[1]}]
+            opt = optimize.minimize(integrate_a_mean_1d, x0=np.array((l_, s_)), constraints=cons,
                                     bounds=((-x, 0), (0, self.dataset_info["cap"])), args=(a, b),
                                     tol=1e-1)
+
             m_max[x] = max(-opt.fun,
                            ((self.dataset_info["cap"] - x) * a) / (a + b))
             stored_l, stored_s = opt.x
@@ -243,7 +261,9 @@ class XYID(Dataset):
                 self.logger.info(" - for input {}, m_max = {} for l {} and s {}".format("%.3f" % x, "%.3f" % m_max[x],
                                                                                         "%.3f" % stored_l,
                                                                                         "%.3f" % stored_s))
-            m_hat[x] = np.mean(abs(sample))
+            #dirac_proba is proba that the output is 0 or cap
+            # TODO test this
+            m_hat[x] = (1-sum(dirac_proba))*np.mean(abs(sample)) + dirac_proba[0]*x + dirac_proba[1]*(self.cap - x)
 
         self.m = m_hat
         self.m_max = m_max
@@ -285,6 +305,7 @@ def find_alpha_beta(p, *args):
     """
     loc, scale, mean, var = args
     a, b = p
+    a, b = abs(a), abs(b)
     return (scale * a) / (a + b) + loc - mean, (scale ** 2 * a * b) / ((a + b) ** 2 * (a + b + 1)) - var
 
 
@@ -299,3 +320,30 @@ def integrate_a_mean_2d(l_, x_, a=0, b=0, verbose=False):
 def integrate_a_mean_1d(x, a=0, b=0, verbose=False):
     l_, x_ = x
     return -integrate_a_mean_2d(l_, x_, a=a, b=b, verbose=verbose)
+
+
+def select_left_right_bound(index_x_, half_length_sample, n_different_samples):
+    if index_x_ - half_length_sample > 0:
+        left_bound = index_x_ - half_length_sample
+        leftover_for_right_bound = 0
+    else:
+        left_bound = 0
+        leftover_for_right_bound = half_length_sample - index_x_
+
+    if index_x_ + half_length_sample < n_different_samples:
+        right_bound = index_x_ + half_length_sample
+        leftover_for_left_bound = 0
+    else:
+        right_bound = n_different_samples - 1
+        leftover_for_left_bound = half_length_sample - (right_bound - index_x_)
+
+    left_bound = max(0, left_bound - leftover_for_left_bound)
+    right_bound = min(n_different_samples - 1, right_bound + leftover_for_right_bound)
+    return left_bound, right_bound
+
+
+def reject_outliers(data, m = 5.):
+    d = np.abs(data - np.median(data))
+    mdev = np.median(d)
+    s = d/mdev if mdev else 0.
+    return data[s<m]

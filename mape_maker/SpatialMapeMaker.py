@@ -146,7 +146,7 @@ class SpatialMapeMaker:
     def build_nodal_xyids(self, spatial_df_forecast, spatial_df_actuals, start_date: str = None, end_date: str = None,
                           ending_feature: str = "actuals", xyid_load_pickle: bool = False,
                           a: float = 4, base_process="ARMA", scale_by_capacity: float = None):
-        columns = list(set(list(spatial_df_forecast.columns)) & set(list(spatial_df_actuals.columns)))
+        columns = list(set(list(spatial_df_forecast.columns)) & set(list(spatial_df_actuals.columns)))[:5]
         shared_index = list(set(list(spatial_df_forecast.datetime)) & set(list(spatial_df_actuals.datetime)))
         shared_index.sort()
 
