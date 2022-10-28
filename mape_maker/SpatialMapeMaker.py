@@ -56,7 +56,7 @@ class SpatialMapeMaker:
 
         spatial_df_forecast = load_spatial_data(xyid_path_forecasts)
         spatial_df_actuals = load_spatial_data(xyid_path_actuals)
-        self.xyids = self.build_nodal_xyids(spatial_df_forecast, spatial_df_actuals, base_process=base_process,
+        self.xyids, self.aggreg = self.build_nodal_xyids(spatial_df_forecast, spatial_df_actuals, base_process=base_process,
                                a=a, start_date=input_start_dt,
                                end_date=input_end_dt,  ending_feature=ending_feature, xyid_load_pickle=xyid_load_pickle,
                                scale_by_capacity=scale_by_capacity) #: step 1: load the XYID, estimate distrib and ARMA
@@ -146,20 +146,30 @@ class SpatialMapeMaker:
     def build_nodal_xyids(self, spatial_df_forecast, spatial_df_actuals, start_date: str = None, end_date: str = None,
                           ending_feature: str = "actuals", xyid_load_pickle: bool = False,
                           a: float = 4, base_process="ARMA", scale_by_capacity: float = None):
-        columns = list(set(list(spatial_df_forecast.columns)) & set(list(spatial_df_actuals.columns)))[:5]
+        columns = list(set(list(spatial_df_forecast.columns)) & set(list(spatial_df_actuals.columns))) #[:5]
+        c = []
+        for c_ in columns:
+            if c_ not in ['Year', 'Month', 'Day', 'Period']:
+                c.append(c_)
+        columns = c
+
         shared_index = list(set(list(spatial_df_forecast.datetime)) & set(list(spatial_df_actuals.datetime)))
         shared_index.sort()
 
         datasets = {}
         columns.sort()
 
+        # spatial_df_forecast["aggregated"] = spatial_df_forecast[columns].sum(axis=1)
+        # spatial_df_actuals["aggregated"] = spatial_df_actuals[columns].sum(axis=1)
+
         # columns = ["160263_1_Wind"] + columns[:2]
         c = columns[0]
+        # columns = columns
         # columns = ['190111_1_Wind'] + columns
         # print(columns[:1])
         for k, c in enumerate(columns):
+            print(c, 100 * k / len(columns))
             if "_" in c:
-                print(c, 100 * k / len(columns))
                 bus_node_str, _, energy_source = c.split("_")
                 bus_node = int(bus_node_str)
                 if bus_node in self.buses_to_lat_long:
@@ -177,7 +187,16 @@ class SpatialMapeMaker:
                     # except:
                     #     print("PROBLEM FOR ", c)
                     #     pass
-        return datasets
+
+        pre_df = pd.DataFrame(index=shared_index, columns=["datetime", "actuals", "forecasts"])
+        pre_df["datetime"] = shared_index
+        pre_df["actuals"] = spatial_df_actuals["aggregated"].loc[shared_index]
+        pre_df["forecasts"] = spatial_df_forecast["aggregated"].loc[shared_index]
+        aggreg = XYID(a, lat_long=(0,0),
+                                base_process="", start_date=start_date,
+                                end_date=end_date, ending_feature=ending_feature, xyid_load_pickle=xyid_load_pickle,
+                                logger=self.logger, scale_by_capacity=scale_by_capacity, df=pre_df, name=c)
+        return datasets, aggreg
 
     def build_spatial_covariance(self):
         n = self.long_lat.shape[0]

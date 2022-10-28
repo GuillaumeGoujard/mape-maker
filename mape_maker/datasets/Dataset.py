@@ -428,5 +428,6 @@ def load_spatial_data(path):
     spatial_df["datetime"] = spatial_df.apply(lambda row: datetime.datetime(int(row["Year"]), int(row["Month"]), int(row["Day"]), int(row["Period"]) - 1),
         axis=1)
     spatial_df.index = spatial_df["datetime"]
+    spatial_df["aggregated"] = spatial_df[spatial_df.columns[4:]].sum(axis=1)
     return spatial_df
 

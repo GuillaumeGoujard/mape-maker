@@ -8,6 +8,8 @@ import numpy as np
 
 import pygeostat as gs
 
+# spatial_desaggregation
+
 bus_list = pd.read_csv("Texas7k_20210529_BusData.csv")
 data_buses = bus_list[['Substation Latitude', 'Substation Longitude', 'Number']].values
 buses_to_lat_long = dict([(int(data_buses[i][2]), (data_buses[i][0], data_buses[i][1])) for i in range(data_buses.shape[0])])
